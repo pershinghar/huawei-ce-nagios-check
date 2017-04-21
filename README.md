@@ -1,0 +1,1 @@
+# huawei-ce-nagios-check
