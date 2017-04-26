@@ -17,6 +17,8 @@ STATE_UNKNOWN=3
 VERBOSE="N"
 HOST="$1"
 MSG=""
+ENTITYLIST=""
+TMPTHRESHOLD=50
 SNMPGET="snmpget -v2c -Oqv -r2 -t1 -c public $HOST"
 SNMPWALK="snmpwalk -v2c -Oqn -r2 -t1 -c public $HOST"
 
@@ -31,14 +33,18 @@ debug () {
     fi
 }
 
+get_entity_list () {
+    ENTITYLIST="$(${SNMPWALK} 1.3.6.1.2.1.47.1.1.1.1.7 | awk -F. '{print $NF}'| tr " " "_" | sed 's/_/-/' )"
+}
+
 check_operation_byindex () {
     # function to go thru entities, then get operational status
     LIST="$1"
     NAME="$2"
     RTRN=""
     while read -r line; do
-        INDEX="$(echo "$line" | cut -d" " -f1 | awk -F. '{print $NF}')"
-        INDEXHUMAN="$(echo "$line" | cut -d" " -f1 --complement)"
+        INDEX="$(echo "$line" | cut -d"-" -f1)"
+        INDEXHUMAN="$(echo "$line" | cut -d"-" -f2)"
         STATUS="$(${SNMPGET} 1.3.6.1.4.1.2011.5.25.31.1.1.1.1.2."$INDEX")"
         if [ "$STATUS" != "3" ]; then
             RTRN="${NAME}:${INDEXHUMAN} Error;"
@@ -63,7 +69,7 @@ check_fans () {
 
 check_psu () {
     # get power id
-    POWERSLOTS="$(${SNMPWALK} 1.3.6.1.2.1.47.1.1.1.1.7 | grep "POWER [0-9]")"
+    POWERSLOTS="$(echo -e "$ENTITYLIST" | grep "POWER_[0-9]")"
     MSG="${MSG}$(check_operation_byindex "${POWERSLOTS}" "Power")"    
 }
 
@@ -72,30 +78,47 @@ check_alarms () {
     # now N/A
 }
 
+check_temp () {
+    # walk thru all senzors, get non-null
+    TEMPS=$(${SNMPWALK} 1.3.6.1.4.1.2011.5.25.31.1.1.1.1.11 | awk -F. '{print $NF}'| tr " " "_" | sed 's/_/-/'| grep -v "[0-9]*-0")
+    while read -r line; do
+        INDEX="$(echo "$line" | cut -d"-" -f1)"
+        INDEXHUMAN="$(echo "$ENTITYLIST" | grep $INDEX | cut -d"-" -f2)"
+        TEMP="$(echo "$line" | cut -d"-" -f2)"
+        if (( $TEMP > $TMPTHRESHOLD )); then
+            MSG="${MSG}Temp:$INDEXHUMAN Above threshold ($TEMP Celsius)"
+        fi
+    done <<< "$TEMPS"
+    return
+}
+
 check_general () {
     check_fans
     check_psu
+    check_temp
 
 }
 
+
+
 check_CE12800 () {
     # check cards
-    MPUS="$(${SNMPWALK} 1.3.6.1.2.1.47.1.1.1.1.7 | grep "MPU")"
+    MPUS="$(echo -e "$ENTITYLIST" | grep "MPU")"
     MSG="${MSG}$(check_operation_byindex "${MPUS}" "MPU")"
  
-    SFUS="$(${SNMPWALK} 1.3.6.1.2.1.47.1.1.1.1.7 | grep "SFU")"
+    SFUS="$(echo -e "$ENTITYLIST" | grep "SFU")"
     MSG="${MSG}$(check_operation_byindex "${SFUS}" "SFU")"
  
-    CMUS="$(${SNMPWALK} 1.3.6.1.2.1.47.1.1.1.1.7 | grep "CMU")"
+    CMUS="$(echo -e "$ENTITYLIST" | grep "CMU")"
     MSG="${MSG}$(check_operation_byindex "${CMUS}" "CMU")"
  
-    LINECARDS="$(${SNMPWALK} 1.3.6.1.2.1.47.1.1.1.1.7 | grep "CE-L24LQ-EC1")"
+    LINECARDS="$(echo -e "$ENTITYLIST" | grep "CE-L24LQ-EC1")"
     MSG="${MSG}$(check_operation_byindex "${LINECARDS}" "Linecard")"
 }
 
 check_CE6851 () {
 
-    MAIN="$(${SNMPWALK} 1.3.6.1.2.1.47.1.1.1.1.7 | grep "\"CE68[0-9][0-9]-")"
+    MAIN="$(echo -e "$ENTITYLIST" | grep "\"CE68[0-9][0-9]-")"
     MSG="${MSG}$(check_operation_byindex "${MAIN}" "Switch")"
 }
 
@@ -111,6 +134,8 @@ if ! MODEL=$(${SNMPGET} .1.3.6.1.4.1.2011.6.3.11.4.0 | tr -d "\""); then
     echo "SNMP Timeout"
     exit $STATE_UNKNOWN
 fi
+
+get_entity_list
 
 
 case "$MODEL" in
