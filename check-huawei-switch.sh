@@ -12,15 +12,27 @@ STATE_OK=0
 STATE_WARNING=1
 STATE_CRITICAL=2
 STATE_UNKNOWN=3
+STATE=0
 
 # Var's
 VERBOSE="N"
 HOST="$1"
 MSG=""
 ENTITYLIST=""
-TMPTHRESHOLD=50
 SNMPGET="snmpget -v2c -Oqv -r2 -t1 -c public $HOST"
 SNMPWALK="snmpwalk -v2c -Oqn -r2 -t1 -c public $HOST"
+
+if [[ "$5" == "-c" ]]; then
+    TMPCRITICAL=$6
+else
+    TMPCRITICAL=70
+fi
+
+if [[ "$3" == "-w" ]]; then
+    TMPWARNING=$4
+else
+    TMPWARNING=60
+fi
 
 ##############
 #FUNCTIONS
@@ -85,8 +97,12 @@ check_temp () {
         INDEX="$(echo "$line" | cut -d"-" -f1)"
         INDEXHUMAN="$(echo "$ENTITYLIST" | grep $INDEX | cut -d"-" -f2)"
         TEMP="$(echo "$line" | cut -d"-" -f2)"
-        if (( $TEMP > $TMPTHRESHOLD )); then
-            MSG="${MSG}Temp:$INDEXHUMAN Above threshold ($TEMP Celsius)"
+        if (( $TEMP > $TMPCRITICAL )); then
+            MSG="${MSG}CRITICAL Temp:$INDEXHUMAN Above threshold ($TEMP Celsius)"
+            STATE=2;
+        elif (( $TEMP > $TMPWARNING )); then
+            MSG="${MSG}WARNING Temp:$INDEXHUMAN Above threshold ($TEMP Celsius)"
+            STATE=1;
         fi
     done <<< "$TEMPS"
     return
@@ -96,10 +112,7 @@ check_general () {
     check_fans
     check_psu
     check_temp
-
 }
-
-
 
 check_CE12800 () {
     # check cards
@@ -120,6 +133,10 @@ check_CE6851 () {
 
     MAIN="$(echo -e "$ENTITYLIST" | grep "\"CE68[0-9][0-9]-")"
     MSG="${MSG}$(check_operation_byindex "${MAIN}" "Switch")"
+}
+
+check_S5735 () {
+    check_temp
 }
 
 ## MAIN
@@ -149,6 +166,10 @@ case "$MODEL" in
         check_CE6851
         ;;
 
+    "S5735-L24T4S-A")
+        check_S5735
+        ;;  
+
     *)
         check_general
         ;;
@@ -157,7 +178,13 @@ esac
 
 if [ "$MSG" != "" ]; then
     echo "$MSG"
-    exit $STATE_CRITICAL
+    if [ $STATE == 1 ]; then
+        exit $STATE_WARNING
+    elif [ $STATE == 2 ]; then
+        exit $STATE_CRITICAL
+    else
+        exit $STATE_CRITICAL
+   fi
 fi
 
 echo "OK"
